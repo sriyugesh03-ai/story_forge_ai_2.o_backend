@@ -1,131 +1,76 @@
+import logging
+
+from app.core.config import settings
+from app.rag.retriever import get_retriever
+from app.prompts.rag_prompt import build_rag_prompt
 from app.services.llm_client import ask_llm
 from app.services.retry_service import retry_call
 from app.services.fallback_service import fallback_call
-
-from app.rag.retriever import Retriever
-
-from app.prompts.rag_prompt import build_rag_prompt
-
 from app.services.evaluation_service import EvaluationService
 
+logger = logging.getLogger(__name__)
 
-retriever = Retriever()
+FALLBACK_MODEL = "groq/llama-3.3-70b-versatile"
 
 
 def welcome_message():
-
-    return {
-
-        "message": "Welcome To Story Forge AI 2.0"
-
-    }
+    return {"message": "Welcome To Story Forge AI 2.0"}
 
 
-def generate_story(topic, story_type):
-
+async def generate_story(topic: str, story_type: str, debug: bool = False) -> dict:
+    retriever = get_retriever()   # shared singleton — no extra model load
     evaluator = EvaluationService()
 
     evaluator.start_request()
 
-    # -------------------------
-    # Retrieve Context
-    # -------------------------
-
+    # ── Retrieve Context ──────────────────────────────────────────────
     evaluator.start_retrieval()
-
     chunks = retriever.retrieve(topic)
-
     evaluator.end_retrieval()
 
-    # -------------------------
-    # Build Prompt
-    # -------------------------
-
+    # ── Build Prompt ──────────────────────────────────────────────────
     context = "\n\n".join(chunks)
+    prompt = build_rag_prompt(topic, story_type, context)
 
-    prompt = build_rag_prompt(
-
-        topic,
-
-        story_type,
-
-        context
-
-    )
-
-    # -------------------------
-    # Generate Story
-    # -------------------------
-
+    # ── Generate Story ────────────────────────────────────────────────
     evaluator.start_llm()
 
     try:
-        result = retry_call(
-            lambda: ask_llm(prompt)
-        )
+        result = await retry_call(lambda: ask_llm(prompt))
     except Exception as err:
-        print(f"[Chat Service] Primary model failed after retries: {err}")
-        print("[Chat Service] Invoking fallback_call...")
+        logger.warning("Primary model failed after retries: %s — invoking fallback", err)
         fallback_story = fallback_call(prompt)
         result = {
             "story": fallback_story,
             "retry_count": 3,
-            "fallback_used": True
+            "fallback_used": True,
         }
 
     evaluator.end_llm()
 
-    # -------------------------
-    # Retry Information
-    # -------------------------
-
+    # ── Build Metrics ──────────────────────────────────────────────────
     story = result["story"]
-
     retry_count = result["retry_count"]
-
     fallback_used = result["fallback_used"]
 
-    # -------------------------
-    # Build Metrics
-    # -------------------------
-
-    from app.core.config import settings
-    model_used = "groq/llama-3.3-70b-versatile" if fallback_used else settings.DEFAULT_MODEL
+    model_used = FALLBACK_MODEL if fallback_used else settings.DEFAULT_MODEL
 
     metrics = evaluator.build_metrics(
-
         model_used=model_used,
-
         retrieved_chunks=len(chunks),
-
         retry_count=retry_count,
-
         fallback_used=fallback_used,
-
-        sources=[
-
-            {
-
-                "player": topic,
-
-                "source": "Wikipedia"
-
-            }
-
-        ]
-
+        sources=[{"player": topic, "source": "Wikipedia"}],
     )
 
-    # -------------------------
-    # Response
-    # -------------------------
-
-    return {
-
-        "retrieved_context": chunks,
-
+    # ── Response ───────────────────────────────────────────────────────
+    response = {
         "story": story,
-
-        "evaluation": metrics
-
+        "evaluation": metrics,
     }
+
+    # Raw chunks are large — only include when the caller explicitly asks for them
+    if debug:
+        response["retrieved_context"] = chunks
+
+    return response

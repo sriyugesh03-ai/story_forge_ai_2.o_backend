@@ -5,6 +5,7 @@
 *.key
 
 ─── Python ───────────────────────────────────────────────────────────────────
+**/__pycache__/
 pycache/
 *.py[cod]
 *.pyo
@@ -26,6 +27,7 @@ env/
 
 ─── Vector Store & Database ──────────────────────────────────────────────────
 chroma_db/
+data/chroma/
 *.sqlite3
 *.db
 

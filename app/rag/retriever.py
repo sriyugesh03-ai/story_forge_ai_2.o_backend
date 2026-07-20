@@ -1,13 +1,48 @@
+import logging
 from app.rag.embedder import EmbeddingService
 from app.rag.vectordb import VectorDatabase
 
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level singleton — loaded once, shared by all routes and services.
+# This prevents multiple SentenceTransformer model loads, each of which
+# costs ~200 MB of RAM.  Import this instance instead of calling Retriever().
+# ---------------------------------------------------------------------------
+_retriever_instance: "Retriever | None" = None
+
+
+def get_retriever() -> "Retriever":
+    """Return the shared Retriever singleton, creating it on first call."""
+    global _retriever_instance
+    if _retriever_instance is None:
+        _retriever_instance = Retriever()
+    return _retriever_instance
+
+
+# ---------------------------------------------------------------------------
+# Player-list cache
+# Invalidated by calling invalidate_player_cache() after re-indexing.
+# Avoids fetching all ChromaDB metadata on every story request.
+# ---------------------------------------------------------------------------
+_player_cache: list[str] | None = None
+
+
+def invalidate_player_cache() -> None:
+    """Call this after re-indexing PDFs to force a cache refresh."""
+    global _player_cache
+    _player_cache = None
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _normalize_player_name(name: str) -> str:
     """
     Normalize a player name to match the metadata stored in ChromaDB.
     The metadata 'player' field is derived from the PDF filename stem
     (e.g. 'MS_Dhoni', 'Virat Kohli', 'Lionel_Messi').
-    This function converts the query topic into a comparable lowercase string.
     """
     return name.strip().lower().replace("_", " ")
 
@@ -15,7 +50,6 @@ def _normalize_player_name(name: str) -> str:
 def _find_best_player_match(query_name: str, all_players: list[str]) -> str | None:
     """
     Find the best matching player name from the stored metadata players list.
-    Compares normalized versions of both the query and stored player names.
     Returns the original (un-normalized) stored player name on match, else None.
     """
     normalized_query = _normalize_player_name(query_name)
@@ -35,12 +69,14 @@ def _find_best_player_match(query_name: str, all_players: list[str]) -> str | No
     return None
 
 
+# ---------------------------------------------------------------------------
+# Retriever class
+# ---------------------------------------------------------------------------
+
 class Retriever:
 
     def __init__(self):
-
         self.embedder = EmbeddingService()
-
         self.vectordb = VectorDatabase()
 
     # ------------------------------------------------------------------
@@ -48,13 +84,20 @@ class Retriever:
     # ------------------------------------------------------------------
 
     def get_all_players(self) -> list[str]:
-        """Return all unique player names stored in the collection metadata."""
+        """Return all unique player names stored in the collection metadata.
+        Result is cached in memory; call invalidate_player_cache() after re-indexing.
+        """
+        global _player_cache
+        if _player_cache is not None:
+            return _player_cache
+
         count = self.vectordb.collection.count()
         if count == 0:
             return []
 
         result = self.vectordb.collection.get(include=["metadatas"])
         players = sorted({m["player"] for m in result["metadatas"] if "player" in m})
+        _player_cache = players
         return players
 
     def get_player_stats(self) -> list[dict]:
@@ -75,12 +118,13 @@ class Retriever:
         ]
 
     # ------------------------------------------------------------------
-    # Retrieve all chunks for a specific player
+    # Retrieve all chunks for a specific player (debug endpoint)
     # ------------------------------------------------------------------
 
-    def retrieve_all_for_player(self, player_name: str) -> dict:
+    def retrieve_all_for_player(self, player_name: str, limit: int = 50) -> dict:
         """
-        Return every indexed chunk for the matched player.
+        Return indexed chunks for the matched player.
+        Uses `limit` to prevent dumping the entire collection in one response.
         Raises ValueError if no player is matched or the DB is empty.
         """
         all_players = self.get_all_players()
@@ -99,10 +143,16 @@ class Retriever:
             include=["documents", "metadatas"],
         )
 
+        docs = result["documents"]
+        total = len(docs)
+        # Apply limit to avoid oversized responses
+        docs = docs[:limit]
+
         return {
             "player": matched_player,
-            "total_chunks": len(result["documents"]),
-            "chunks": result["documents"],
+            "total_chunks": total,
+            "returned": len(docs),
+            "chunks": docs,
         }
 
     # ------------------------------------------------------------------
@@ -113,23 +163,21 @@ class Retriever:
         """
         Semantically retrieve the top-k most relevant chunks.
         Automatically filters by player when a match is found.
+        Uses the cached player list to avoid a ChromaDB metadata scan per request.
         """
-        # Embed the query
         query_embedding = self.embedder.create_embeddings([query])
 
-        # Try to find a matching player for filtered retrieval
-        all_players = self.get_all_players()
+        all_players = self.get_all_players()  # reads from cache after first call
 
         where_filter = None
         if all_players:
             matched_player = _find_best_player_match(query, all_players)
             if matched_player:
                 where_filter = {"player": {"$eq": matched_player}}
-                print(f"[Retriever] Filtering by player: '{matched_player}'")
+                logger.debug("Filtering by player: '%s'", matched_player)
             else:
-                print(f"[Retriever] No exact player match for '{query}', doing global search")
+                logger.debug("No exact player match for '%s', doing global search", query)
 
-        # Build query kwargs
         query_kwargs = {
             "query_embeddings": query_embedding.tolist(),
             "n_results": top_k,
@@ -139,5 +187,4 @@ class Retriever:
             query_kwargs["where"] = where_filter
 
         results = self.vectordb.collection.query(**query_kwargs)
-
         return results["documents"][0]

@@ -3,18 +3,15 @@ from app.rag.loader import DocumentLoader
 from app.rag.chunker import TextChunker
 from app.rag.embedder import EmbeddingService
 from app.rag.vectordb import VectorDatabase
-
+from app.rag.retriever import invalidate_player_cache
 
 class RAGIndexer:
+    """Class to manage indexing PDF files, parsing text, generating embeddings, and storing them in ChromaDB."""
 
     def __init__(self):
-
         self.loader = DocumentLoader()
-
         self.chunker = TextChunker()
-
         self.embedder = EmbeddingService()
-
         self.vectordb = VectorDatabase()
 
     def reset_index(self):
@@ -27,20 +24,17 @@ class RAGIndexer:
         print("[Indexer] Collection wiped. Starting fresh build.\n")
 
     def build_index(self, reset: bool = False):
-
+        """Processes all PDFs in data/pdfs, chunks their contents, creates vector embeddings, and indexes them in ChromaDB."""
         if reset:
             self.reset_index()
 
         pdf_folder = Path("data/pdfs")
-
         pdf_files = sorted(pdf_folder.glob("*.pdf"))
-
         total = len(pdf_files)
 
         print(f"\nFound {total} PDFs\n")
 
         for idx, pdf in enumerate(pdf_files, start=1):
-
             print("=" * 60)
             print(f"[{idx}/{total}] Processing: {pdf.name}")
             print("=" * 60)
@@ -54,29 +48,24 @@ class RAGIndexer:
                     continue
 
             text = self.loader.load_pdf(str(pdf))
-
             chunks = self.chunker.split_text(text)
-
             embeddings = self.embedder.create_embeddings(chunks)
-
             ids = [f"{pdf.stem}_{i}" for i in range(len(chunks))]
 
             self.vectordb.collection.add(
-
                 ids=ids,
-
                 documents=chunks,
-
                 embeddings=embeddings.tolist(),
-
                 metadatas=[
                     {"player": pdf.stem, "source": "Wikipedia"}
                     for _ in chunks
                 ]
-
             )
 
             print(f"  [DONE] {len(chunks)} chunks indexed for '{pdf.stem}'")
+
+        # Invalidate player search cache in case indexer runs in-process
+        invalidate_player_cache()
 
         final_count = self.vectordb.collection.count()
         print("\n" + "=" * 60)
