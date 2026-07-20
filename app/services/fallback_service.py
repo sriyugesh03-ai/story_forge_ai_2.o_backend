@@ -1,22 +1,14 @@
+import logging
 from app.services.llm_client import ask_llm
+
+logger = logging.getLogger(__name__)
 
 FALLBACK_MODEL = "groq/llama-3.3-70b-versatile"
 
-
-def fallback_call(prompt: str):
-
-    print("=" * 50)
-    print("[Fallback] Primary model failed.")
-    print(f"[Fallback] Switching to {FALLBACK_MODEL}")
-    print("=" * 50)
-
+def fallback_call(prompt: str) -> str:
+    """Executes a fallback call using the configured fallback model when the primary model fails."""
+    logger.warning("Primary LLM model failed. Switching to fallback model: %s", FALLBACK_MODEL)
     return ask_llm(
         prompt=prompt,
         model=FALLBACK_MODEL
     )
-
-
-
-
-
-

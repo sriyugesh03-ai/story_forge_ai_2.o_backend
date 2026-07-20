@@ -1,31 +1,15 @@
-
-from dotenv import load_dotenv
 import os
+from dotenv import load_dotenv
 
 load_dotenv()
 
 class Settings:
-
-    APP_NAME = os.getenv("APP_NAME")
-
-    APP_VERSION = os.getenv("APP_VERSION")
-
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL")
-
-    GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-
-    TEMPERATURE = float(
-
-        os.getenv("TEMPERATURE")
-
-    )
-
-    MAX_TOKENS = int(
-
-        os.getenv("MAX_TOKENS")
-
-    )
+    """Application-wide configuration settings loaded from environment variables."""
+    APP_NAME: str = os.getenv("APP_NAME", "Story Forge AI 2.O")
+    DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gemini/gemini-2.5-flash")
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.7"))
+    MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "5000"))
 
 settings = Settings()

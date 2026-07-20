@@ -1,12 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pathlib import Path
 
-from app.rag.retriever import Retriever
+from app.rag.retriever import get_retriever
 from app.routes.auth import get_current_user
 
 router = APIRouter(prefix="/players", tags=["players"])
-
-retriever = Retriever()
 
 PDF_FOLDER = Path("data/pdfs")
 
@@ -22,6 +20,8 @@ def list_players(current_user: dict = Depends(get_current_user)):
     - `pdf_available`: player PDFs present on disk
     - `indexed_stats`: per-player chunk counts in the vector DB
     """
+    retriever = get_retriever()  # shared singleton
+
     # PDFs on disk
     pdf_files = sorted(PDF_FOLDER.glob("*.pdf"))
     pdf_players = [
@@ -48,19 +48,23 @@ def list_players(current_user: dict = Depends(get_current_user)):
 
 # ------------------------------------------------------------------
 # GET /players/{player_name}/chunks
-# Return ALL indexed chunks for a given player
+# Return indexed chunks for a given player (paginated)
 # ------------------------------------------------------------------
 @router.get("/{player_name}/chunks")
 def get_player_chunks(
     player_name: str,
+    limit: int = 50,
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Retrieve every chunk indexed in the vector DB for the given player.
+    Retrieve indexed chunks in the vector DB for the given player.
     The player_name is matched flexibly (case-insensitive, underscore-tolerant).
+    Use `limit` to control how many chunks are returned (default: 50).
     """
+    retriever = get_retriever()  # shared singleton
+
     try:
-        result = retriever.retrieve_all_for_player(player_name)
+        result = retriever.retrieve_all_for_player(player_name, limit=limit)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
