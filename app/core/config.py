@@ -9,7 +9,11 @@ class Settings:
     DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gemini/gemini-2.5-flash")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    XAI_API_KEY:str = os.getenv("XAI_API_KEY","")
     TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.7"))
+    VOYAGE_API_KEY: str = os.getenv("VOYAGE_API_KEY", "")
     MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "5000"))
+    MANGO_DB_URL :str = os.getenv("MANGO_DB_URL")
 
 settings = Settings()
+

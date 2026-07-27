@@ -1,5 +1,6 @@
 import sys
 import os
+import asyncio
 
 # Configure stdout to handle UTF-8 encoding safely on Windows command prompt
 if hasattr(sys.stdout, "reconfigure"):
@@ -12,20 +13,25 @@ if hasattr(sys.stdout, "reconfigure"):
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.rag.retriever import get_retriever
+from app.db.mongo_db import connect_to_mongo, close_mongo_connection
 
-retriever = get_retriever()
-
-results = retriever.retrieve(
-    "Tell me about MS Dhoni's captaincy"
-)
-
-print("=" * 60)
-
-for index, chunk in enumerate(results, start=1):
-    print(f"\nChunk {index}")
-    print("-" * 40)
-    # Safely print character strings that might have non-cp1252 characters
+async def main():
+    # Setup MongoDB connection
+    await connect_to_mongo()
     try:
-        print(chunk)
-    except UnicodeEncodeError:
-        print(chunk.encode("ascii", errors="replace").decode("ascii"))
+        retriever = get_retriever()
+        results = await retriever.retrieve("Tell me about Carlos Alcaraz")
+        
+        print("=" * 60)
+        for index, chunk in enumerate(results, start=1):
+            print(f"\nChunk {index}")
+            print("-" * 40)
+            try:
+                print(chunk)
+            except UnicodeEncodeError:
+                print(chunk.encode("ascii", errors="replace").decode("ascii"))
+    finally:
+        await close_mongo_connection()
+
+if __name__ == "__main__":
+    asyncio.run(main())

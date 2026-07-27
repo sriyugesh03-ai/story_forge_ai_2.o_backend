@@ -62,3 +62,7 @@ desktop.ini
 .pytest_cache/
 .coverage
 htmlcov/
+
+test_voice_data
+outputs
+procfile

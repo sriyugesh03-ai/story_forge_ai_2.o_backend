@@ -14,7 +14,7 @@ PDF_FOLDER = Path("data/pdfs")
 # List all available players (from PDFs on disk + indexed stats)
 # ------------------------------------------------------------------
 @router.get("/")
-def list_players(current_user: dict = Depends(get_current_user)):
+async def list_players(current_user: dict = Depends(get_current_user)):
     """
     Returns all players available in the system.
     - `pdf_available`: player PDFs present on disk
@@ -30,7 +30,7 @@ def list_players(current_user: dict = Depends(get_current_user)):
     ]
 
     # Indexed stats from vector DB
-    indexed_stats = retriever.get_player_stats()
+    indexed_stats = await retriever.get_player_stats()
     indexed_map = {s["player"]: s["chunks_indexed"] for s in indexed_stats}
 
     # Merge: annotate each PDF entry with indexing status
@@ -51,7 +51,7 @@ def list_players(current_user: dict = Depends(get_current_user)):
 # Return indexed chunks for a given player (paginated)
 # ------------------------------------------------------------------
 @router.get("/{player_name}/chunks")
-def get_player_chunks(
+async def get_player_chunks(
     player_name: str,
     limit: int = 50,
     current_user: dict = Depends(get_current_user),
@@ -64,7 +64,7 @@ def get_player_chunks(
     retriever = get_retriever()  # shared singleton
 
     try:
-        result = retriever.retrieve_all_for_player(player_name, limit=limit)
+        result = await retriever.retrieve_all_for_player(player_name, limit=limit)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

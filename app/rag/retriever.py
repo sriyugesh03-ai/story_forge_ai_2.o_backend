@@ -23,7 +23,7 @@ def get_retriever() -> "Retriever":
 # ---------------------------------------------------------------------------
 # Player-list cache
 # Invalidated by calling invalidate_player_cache() after re-indexing.
-# Avoids fetching all ChromaDB metadata on every story request.
+# Avoids fetching all MongoDB metadata on every story request.
 # ---------------------------------------------------------------------------
 _player_cache: list[str] | None = None
 
@@ -40,7 +40,7 @@ def invalidate_player_cache() -> None:
 
 def _normalize_player_name(name: str) -> str:
     """
-    Normalize a player name to match the metadata stored in ChromaDB.
+    Normalize a player name to match the metadata stored in MongoDB.
     The metadata 'player' field is derived from the PDF filename stem
     (e.g. 'MS_Dhoni', 'Virat Kohli', 'Lionel_Messi').
     """
@@ -83,7 +83,7 @@ class Retriever:
     # Players
     # ------------------------------------------------------------------
 
-    def get_all_players(self) -> list[str]:
+    async def get_all_players(self) -> list[str]:
         """Return all unique player names stored in the collection metadata.
         Result is cached in memory; call invalidate_player_cache() after re-indexing.
         """
@@ -91,43 +91,25 @@ class Retriever:
         if _player_cache is not None:
             return _player_cache
 
-        count = self.vectordb.collection.count()
-        if count == 0:
-            return []
+        players = await self.vectordb.get_distinct_players()
+        _player_cache = sorted(players)
+        return _player_cache
 
-        result = self.vectordb.collection.get(include=["metadatas"])
-        players = sorted({m["player"] for m in result["metadatas"] if "player" in m})
-        _player_cache = players
-        return players
-
-    def get_player_stats(self) -> list[dict]:
+    async def get_player_stats(self) -> list[dict]:
         """Return each player with their chunk count."""
-        count = self.vectordb.collection.count()
-        if count == 0:
-            return []
-
-        result = self.vectordb.collection.get(include=["metadatas"])
-        stats: dict[str, int] = {}
-        for m in result["metadatas"]:
-            player = m.get("player", "unknown")
-            stats[player] = stats.get(player, 0) + 1
-
-        return [
-            {"player": p, "chunks_indexed": c}
-            for p, c in sorted(stats.items())
-        ]
+        return await self.vectordb.get_player_stats()
 
     # ------------------------------------------------------------------
     # Retrieve all chunks for a specific player (debug endpoint)
     # ------------------------------------------------------------------
 
-    def retrieve_all_for_player(self, player_name: str, limit: int = 50) -> dict:
+    async def retrieve_all_for_player(self, player_name: str, limit: int = 50) -> dict:
         """
-        Return indexed chunks for the matched player.
+        Return indexed chunks for the matched player from MongoDB.
         Uses `limit` to prevent dumping the entire collection in one response.
         Raises ValueError if no player is matched or the DB is empty.
         """
-        all_players = self.get_all_players()
+        all_players = await self.get_all_players()
         if not all_players:
             raise ValueError("The vector database is empty. Run the indexer first.")
 
@@ -138,53 +120,41 @@ class Retriever:
                 f"Available: {all_players}"
             )
 
-        result = self.vectordb.collection.get(
-            where={"player": {"$eq": matched_player}},
-            include=["documents", "metadatas"],
-        )
-
-        docs = result["documents"]
-        total = len(docs)
-        # Apply limit to avoid oversized responses
-        docs = docs[:limit]
+        total = await self.vectordb.get_player_chunk_count(matched_player)
+        chunks = await self.vectordb.get_all_for_player(matched_player, limit=limit)
 
         return {
             "player": matched_player,
             "total_chunks": total,
-            "returned": len(docs),
-            "chunks": docs,
+            "returned": len(chunks),
+            "chunks": chunks,
         }
 
     # ------------------------------------------------------------------
     # Semantic retrieval (used by story generation)
     # ------------------------------------------------------------------
 
-    def retrieve(self, query: str, top_k: int = 5) -> list[str]:
+    async def retrieve(self, query: str, top_k: int = 5) -> list[str]:
         """
-        Semantically retrieve the top-k most relevant chunks.
+        Semantically retrieve the top-k most relevant chunks using MongoDB Atlas Vector Search.
         Automatically filters by player when a match is found.
-        Uses the cached player list to avoid a ChromaDB metadata scan per request.
+        Uses the cached player list to avoid a metadata scan per request.
         """
-        query_embedding = self.embedder.create_embeddings([query])
+        query_embedding = await self.embedder.embed_query(query)
 
-        all_players = self.get_all_players()  # reads from cache after first call
+        all_players = await self.get_all_players()  # reads from cache after first call
 
-        where_filter = None
+        matched_player = None
         if all_players:
             matched_player = _find_best_player_match(query, all_players)
             if matched_player:
-                where_filter = {"player": {"$eq": matched_player}}
                 logger.debug("Filtering by player: '%s'", matched_player)
             else:
                 logger.debug("No exact player match for '%s', doing global search", query)
 
-        query_kwargs = {
-            "query_embeddings": query_embedding.tolist(),
-            "n_results": top_k,
-        }
-
-        if where_filter:
-            query_kwargs["where"] = where_filter
-
-        results = self.vectordb.collection.query(**query_kwargs)
-        return results["documents"][0]
+        results = await self.vectordb.query(
+            query_embedding=query_embedding,
+            top_k=top_k,
+            filter_player=matched_player
+        )
+        return [doc["text"] for doc in results]

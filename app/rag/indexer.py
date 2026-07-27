@@ -6,7 +6,7 @@ from app.rag.vectordb import VectorDatabase
 from app.rag.retriever import invalidate_player_cache
 
 class RAGIndexer:
-    """Class to manage indexing PDF files, parsing text, generating embeddings, and storing them in ChromaDB."""
+    """Class to manage indexing PDF files, parsing text, generating embeddings, and storing them in MongoDB."""
 
     def __init__(self):
         self.loader = DocumentLoader()
@@ -14,19 +14,16 @@ class RAGIndexer:
         self.embedder = EmbeddingService()
         self.vectordb = VectorDatabase()
 
-    def reset_index(self):
-        """Wipe the entire ChromaDB collection and recreate it fresh."""
-        client = self.vectordb.client
-        client.delete_collection("sports_knowledge")
-        self.vectordb.collection = client.get_or_create_collection(
-            name="sports_knowledge"
-        )
+    async def reset_index(self):
+        """Wipe the entire MongoDB collection."""
+        collection = self.vectordb._get_collection()
+        await collection.delete_many({})
         print("[Indexer] Collection wiped. Starting fresh build.\n")
 
-    def build_index(self, reset: bool = False):
-        """Processes all PDFs in data/pdfs, chunks their contents, creates vector embeddings, and indexes them in ChromaDB."""
+    async def build_index(self, reset: bool = False):
+        """Processes all PDFs in data/pdfs, chunks their contents, creates vector embeddings, and indexes them in MongoDB."""
         if reset:
-            self.reset_index()
+            await self.reset_index()
 
         pdf_folder = Path("data/pdfs")
         pdf_files = sorted(pdf_folder.glob("*.pdf"))
@@ -42,20 +39,20 @@ class RAGIndexer:
             # Skip if already indexed (only when not doing a full reset)
             if not reset:
                 first_id = f"{pdf.stem}_0"
-                existing = self.vectordb.collection.get(ids=[first_id])
-                if existing["ids"]:
+                existing = await self.vectordb.get_by_id(first_id)
+                if existing:
                     print(f"  [SKIP] Already indexed: {pdf.name}")
                     continue
 
             text = self.loader.load_pdf(str(pdf))
             chunks = self.chunker.split_text(text)
-            embeddings = self.embedder.create_embeddings(chunks)
+            embeddings = await self.embedder.embed_texts(chunks)
             ids = [f"{pdf.stem}_{i}" for i in range(len(chunks))]
 
-            self.vectordb.collection.add(
+            await self.vectordb.add(
                 ids=ids,
                 documents=chunks,
-                embeddings=embeddings.tolist(),
+                embeddings=embeddings,
                 metadatas=[
                     {"player": pdf.stem, "source": "Wikipedia"}
                     for _ in chunks
@@ -67,7 +64,7 @@ class RAGIndexer:
         # Invalidate player search cache in case indexer runs in-process
         invalidate_player_cache()
 
-        final_count = self.vectordb.collection.count()
+        final_count = await self.vectordb.count()
         print("\n" + "=" * 60)
         print(f"Index build complete. Total chunks in DB: {final_count}")
         print("=" * 60 + "\n")

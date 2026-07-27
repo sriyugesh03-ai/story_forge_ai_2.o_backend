@@ -5,10 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routes.llm import router as llm_router
 from app.routes.auth import router as auth_router
 from app.routes.players import router as players_router
-from app.core.db import init_db
+#from app.routes.voice import router as voice_router
+from app.db.mongo_db import connect_to_mongo, close_mongo_connection
+from app.rag.rag_pipeline import ingest
 
 # Load allowed origins from environment or default to common development origins
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS")
+
 if ALLOWED_ORIGINS:
     origins = [origin.strip() for origin in ALLOWED_ORIGINS.split(",") if origin.strip()]
 else:
@@ -22,9 +25,15 @@ else:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup code
-    init_db()
+    await connect_to_mongo()
+    try:
+        await ingest()
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn").error(f"Error during startup ingestion: {e}")
     yield
-    # Shutdown code (none needed)
+    # Shutdown code
+    await close_mongo_connection()
 
 app = FastAPI(
     title="Story Forge AI 2.O",
@@ -43,3 +52,4 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(llm_router)
 app.include_router(players_router)
+#app.include_router(voice_router)

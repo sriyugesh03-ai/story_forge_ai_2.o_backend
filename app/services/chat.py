@@ -25,7 +25,7 @@ async def generate_story(topic: str, story_type: str, debug: bool = False) -> di
 
     # ── Retrieve Context ──────────────────────────────────────────────
     evaluator.start_retrieval()
-    chunks = retriever.retrieve(topic)
+    chunks = await retriever.retrieve(topic)
     evaluator.end_retrieval()
 
     # ── Build Prompt ──────────────────────────────────────────────────
