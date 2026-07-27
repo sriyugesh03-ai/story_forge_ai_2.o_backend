@@ -27,7 +27,7 @@ env/
 
 ─── Vector Store & Database ──────────────────────────────────────────────────
 chroma_db/
-data/chroma/
+data/
 *.sqlite3
 *.db
 
