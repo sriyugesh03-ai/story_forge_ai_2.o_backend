@@ -1,17 +1,16 @@
-import pdfplumber
+from langchain_community.document_loaders import PDFPlumberLoader
+from langchain_core.documents import Document
+
 
 class DocumentLoader:
-    """Wrapper class for loading and extracting text content from PDF files."""
+    """LangChain-native Document Loader for PDF files using PDFPlumberLoader."""
+
+    def load_documents(self, file_path: str) -> list[Document]:
+        """Load pages from a PDF file as a list of LangChain Document objects."""
+        loader = PDFPlumberLoader(file_path)
+        return loader.load()
 
     def load_pdf(self, file_path: str) -> str:
         """Extract text from all pages of a PDF file, returning a single concatenated string."""
-        pages_content = []
-
-        with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    pages_content.append(page_text)
-
-        # O(n) concatenation instead of quadratic string copy allocations
-        return "\n".join(pages_content)
+        docs = self.load_documents(file_path)
+        return "\n".join(doc.page_content for doc in docs if doc.page_content)

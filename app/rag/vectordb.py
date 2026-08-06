@@ -1,23 +1,83 @@
 import logging
+import asyncio
 from pymongo import UpdateOne
+from langchain_core.vectorstores import VectorStore as LCVectorStore
+from langchain_core.documents import Document
 from app.db.mongo_db import get_vector_collection
+from app.rag.embedder import EmbeddingService
 
 logger = logging.getLogger("uvicorn")
 
 
-class VectorStore:
+class VectorStore(LCVectorStore):
     """
     Stores text chunks alongside their embeddings in MongoDB Atlas,
     and performs vector search using Atlas Vector Search ($vectorSearch).
+    Subclasses LangChain VectorStore for full LCEL compatibility.
     """
 
     INDEX_NAME = "vector_index_v4"
 
+    def __init__(self, embedding_model=None):
+        self.embedding_model = embedding_model or EmbeddingService()
+
+    @classmethod
+    def from_texts(cls, texts, embedding, metadatas=None, **kwargs):
+        raise NotImplementedError("Use add or aadd_documents method.")
+
     def _get_collection(self):
         return get_vector_collection()
 
+    async def aadd_documents(self, documents: list[Document], ids: list[str] = None) -> list[str]:
+        """LangChain async document ingestion."""
+        if not documents:
+            return []
+        texts = [doc.page_content for doc in documents]
+        embeddings = await self.embedding_model.aembed_documents(texts)
+        if ids is None:
+            ids = [
+                doc.metadata.get("id") or f"doc_{i}"
+                for i, doc in enumerate(documents)
+            ]
+        metadatas = [doc.metadata for doc in documents]
+        await self.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
+        return ids
+
+    def add_documents(self, documents: list[Document], ids: list[str] = None) -> list[str]:
+        """LangChain sync document ingestion."""
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.run_until_complete(self.aadd_documents(documents, ids))
+        except RuntimeError:
+            return asyncio.run(self.aadd_documents(documents, ids))
+
+    async def asimilarity_search(
+        self, query: str, k: int = 4, filter_player: str | None = None, **kwargs
+    ) -> list[Document]:
+        """LangChain async similarity search returning Document objects."""
+        query_embedding = await self.embedding_model.aembed_query(query)
+        results = await self.query(query_embedding=query_embedding, top_k=k, filter_player=filter_player)
+        return [
+            Document(
+                page_content=res["text"],
+                metadata={"source": res["source"], "score": res["score"], "distance": res["distance"]}
+            )
+            for res in results
+        ]
+
+    def similarity_search(
+        self, query: str, k: int = 4, filter_player: str | None = None, **kwargs
+    ) -> list[Document]:
+        """LangChain sync similarity search returning Document objects."""
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.run_until_complete(self.asimilarity_search(query, k=k, filter_player=filter_player))
+        except RuntimeError:
+            return asyncio.run(self.asimilarity_search(query, k=k, filter_player=filter_player))
+
     async def get_existing_ids(self) -> set[str]:
         """Returns all document chunk IDs already present in MongoDB Atlas."""
+
         try:
             collection = self._get_collection()
             cursor = collection.find({}, {"_id": 1, "id": 1})
