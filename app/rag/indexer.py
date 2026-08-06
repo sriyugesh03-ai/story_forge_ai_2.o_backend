@@ -44,22 +44,18 @@ class RAGIndexer:
                     print(f"  [SKIP] Already indexed: {pdf.name}")
                     continue
 
-            text = self.loader.load_pdf(str(pdf))
-            chunks = self.chunker.split_text(text)
-            embeddings = await self.embedder.embed_texts(chunks)
-            ids = [f"{pdf.stem}_{i}" for i in range(len(chunks))]
+            docs = self.loader.load_documents(str(pdf))
+            split_docs = self.chunker.split_documents(docs)
+            ids = [f"{pdf.stem}_{i}" for i in range(len(split_docs))]
+            for i, doc in enumerate(split_docs):
+                doc.metadata["player"] = pdf.stem
+                doc.metadata["source"] = "Wikipedia"
+                doc.metadata["id"] = ids[i]
 
-            await self.vectordb.add(
-                ids=ids,
-                documents=chunks,
-                embeddings=embeddings,
-                metadatas=[
-                    {"player": pdf.stem, "source": "Wikipedia"}
-                    for _ in chunks
-                ]
-            )
+            await self.vectordb.aadd_documents(split_docs, ids=ids)
 
-            print(f"  [DONE] {len(chunks)} chunks indexed for '{pdf.stem}'")
+            print(f"  [DONE] {len(split_docs)} chunks indexed for '{pdf.stem}'")
+
 
         # Invalidate player search cache in case indexer runs in-process
         invalidate_player_cache()

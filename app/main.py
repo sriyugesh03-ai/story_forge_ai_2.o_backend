@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routes.llm import router as llm_router
 from app.routes.auth import router as auth_router
 from app.routes.players import router as players_router
-#from app.routes.voice import router as voice_router
+# from app.routes.voice import router as voice_router
 from app.db.mongo_db import connect_to_mongo, close_mongo_connection
 from app.rag.rag_pipeline import ingest
 
