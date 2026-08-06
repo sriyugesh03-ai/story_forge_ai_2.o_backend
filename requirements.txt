@@ -9,4 +9,9 @@ email-validator
 motor
 certifi
 numpy
+langchain
+langchain-community
+langchain-core
+langchain-mongodb
+langchain-google-genai
 

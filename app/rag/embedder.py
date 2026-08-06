@@ -1,17 +1,18 @@
 import litellm
 import asyncio
 import logging
+from langchain_core.embeddings import Embeddings
 from app.core.config import settings
 
 logger = logging.getLogger("uvicorn")
 
 
-class EmbeddingModel:
+class EmbeddingModel(Embeddings):
     """
-    Turns text into vectors (lists of numbers) so we can compare how
-    similar two pieces of text are by comparing their vectors.
+    Turns text into vectors so we can compare how similar two pieces of text are.
 
-    Uses Google's Gemini embedding API (gemini-embedding-001, 768 dimensions).
+    Uses Google's Gemini embedding API via LiteLLM with rate limit retry logic.
+    Subclasses LangChain's Embeddings base class for full ecosystem compatibility.
     """
 
     def __init__(self, model_name: str = "gemini/gemini-embedding-001", dimensions: int = 768):
@@ -43,8 +44,8 @@ class EmbeddingModel:
                     logger.error(f"[EmbeddingModel] Embedding call failed permanently: {e}")
                     raise e
 
-    async def embed_texts(self, texts: list[str], batch_size: int = 10) -> list[list[float]]:
-        """Embeds many chunks at once — used during ingestion."""
+    async def aembed_documents(self, texts: list[str], batch_size: int = 10) -> list[list[float]]:
+        """Embeds many chunks asynchronously — used during ingestion."""
         embeddings = []
 
         for start in range(0, len(texts), batch_size):
@@ -64,8 +65,16 @@ class EmbeddingModel:
 
         return embeddings
 
-    async def embed_query(self, text: str) -> list[float]:
-        """Embeds a single piece of text — used for a user's question."""
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Synchronous wrapper for embedding documents."""
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.run_until_complete(self.aembed_documents(texts))
+        except RuntimeError:
+            return asyncio.run(self.aembed_documents(texts))
+
+    async def aembed_query(self, text: str) -> list[float]:
+        """Embeds a single piece of text asynchronously — used for a user's question."""
         response = await self._embed_with_retry(
             model=self.model_name,
             input=[text],
@@ -75,6 +84,19 @@ class EmbeddingModel:
         )
         return response.data[0]["embedding"]
 
+    def embed_query(self, text: str) -> list[float]:
+        """Synchronous wrapper for embedding query."""
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.run_until_complete(self.aembed_query(text))
+        except RuntimeError:
+            return asyncio.run(self.aembed_query(text))
+
+    async def embed_texts(self, texts: list[str], batch_size: int = 10) -> list[list[float]]:
+        """Compatibility alias for aembed_documents."""
+        return await self.aembed_documents(texts, batch_size=batch_size)
+
 
 # Keep class name compatibility with rest of codebase
 EmbeddingService = EmbeddingModel
+

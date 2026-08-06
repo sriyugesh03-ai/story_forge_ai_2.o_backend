@@ -2,7 +2,7 @@ import logging
 
 from app.core.config import settings
 from app.rag.retriever import get_retriever
-from app.prompts.rag_prompt import build_rag_prompt
+from app.prompts.rag_prompt import get_rag_prompt_template
 from app.services.llm_client import ask_llm
 from app.services.retry_service import retry_call
 from app.services.fallback_service import fallback_call
@@ -18,19 +18,21 @@ def welcome_message():
 
 
 async def generate_story(topic: str, story_type: str, debug: bool = False) -> dict:
-    retriever = get_retriever()   # shared singleton — no extra model load
+    retriever = get_retriever()   # shared singleton — BaseRetriever instance
     evaluator = EvaluationService()
 
     evaluator.start_request()
 
-    # ── Retrieve Context ──────────────────────────────────────────────
+    # ── Retrieve Context via LangChain BaseRetriever ainvoke ─────────
     evaluator.start_retrieval()
-    chunks = await retriever.retrieve(topic)
+    docs = await retriever.ainvoke(topic)
+    chunks = [doc.page_content for doc in docs]
     evaluator.end_retrieval()
 
-    # ── Build Prompt ──────────────────────────────────────────────────
-    context = "\n\n".join(chunks)
-    prompt = build_rag_prompt(topic, story_type, context)
+    # ── Build Prompt via LangChain ChatPromptTemplate ──────────────────
+    prompt_template = get_rag_prompt_template(topic, story_type)
+    context_str = "\n\n".join(chunks)
+    prompt = prompt_template.format(context=context_str)
 
     # ── Generate Story ────────────────────────────────────────────────
     evaluator.start_llm()
@@ -47,6 +49,7 @@ async def generate_story(topic: str, story_type: str, debug: bool = False) -> di
         }
 
     evaluator.end_llm()
+
 
     # ── Build Metrics ──────────────────────────────────────────────────
     story = result["story"]

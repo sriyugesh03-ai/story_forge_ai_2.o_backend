@@ -55,38 +55,31 @@ async def ingest():
         logger.info(f"🚀 [Ingest] [{idx}/{total}] Processing: {pdf.name}")
         
         try:
-            # 1. Load document text
-            text = loader.load_pdf(str(pdf))
-            if not text.strip():
+            # 1. Load document text using LangChain loader
+            docs = loader.load_documents(str(pdf))
+            if not docs:
                 logger.warning(f"⚠️ [Ingest] Extracted text for {pdf.name} is empty. Skipping.")
                 continue
             
-            # 2. Split text into chunks
-            chunks = chunker.split_text(text)
-            if not chunks:
+            # 2. Split text into chunks using LangChain RecursiveCharacterTextSplitter
+            split_docs = chunker.split_documents(docs)
+            if not split_docs:
                 logger.warning(f"⚠️ [Ingest] No chunks generated for {pdf.name}. Skipping.")
                 continue
                 
-            # 3. Create embeddings for chunks (async)
-            embeddings = await embedder.embed_texts(chunks)
+            # 3. Prepare IDs and Metadata
+            ids = [f"{pdf.stem}_{i}" for i in range(len(split_docs))]
+            for i, doc in enumerate(split_docs):
+                doc.metadata["player"] = pdf.stem
+                doc.metadata["source"] = "Wikipedia"
+                doc.metadata["id"] = ids[i]
             
-            # 4. Prepare IDs and Metadatas
-            ids = [f"{pdf.stem}_{i}" for i in range(len(chunks))]
-            metadatas = [
-                {"player": pdf.stem, "source": "Wikipedia"}
-                for _ in chunks
-            ]
-            
-            # 5. Store in vector database
-            await vectordb.add(
-                ids=ids,
-                documents=chunks,
-                embeddings=embeddings,
-                metadatas=metadatas
-            )
+            # 4. Store in vector database using LangChain VectorStore method
+            await vectordb.aadd_documents(split_docs, ids=ids)
             
             ingested_any = True
-            logger.info(f"✅ [Ingest] Successfully ingested {len(chunks)} chunks for {pdf.name}")
+            logger.info(f"✅ [Ingest] Successfully ingested {len(split_docs)} chunks for {pdf.name}")
+
             
         except Exception as e:
             logger.error(f"❌ [Ingest] Failed to process {pdf.name}: {e}", exc_info=True)

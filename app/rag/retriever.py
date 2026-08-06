@@ -1,4 +1,9 @@
 import logging
+import asyncio
+from typing import Any
+from pydantic import Field
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.documents import Document
 from app.rag.embedder import EmbeddingService
 from app.rag.vectordb import VectorDatabase
 
@@ -6,8 +11,6 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level singleton — loaded once, shared by all routes and services.
-# This prevents multiple SentenceTransformer model loads, each of which
-# costs ~200 MB of RAM.  Import this instance instead of calling Retriever().
 # ---------------------------------------------------------------------------
 _retriever_instance: "Retriever | None" = None
 
@@ -22,8 +25,6 @@ def get_retriever() -> "Retriever":
 
 # ---------------------------------------------------------------------------
 # Player-list cache
-# Invalidated by calling invalidate_player_cache() after re-indexing.
-# Avoids fetching all MongoDB metadata on every story request.
 # ---------------------------------------------------------------------------
 _player_cache: list[str] | None = None
 
@@ -41,8 +42,6 @@ def invalidate_player_cache() -> None:
 def _normalize_player_name(name: str) -> str:
     """
     Normalize a player name to match the metadata stored in MongoDB.
-    The metadata 'player' field is derived from the PDF filename stem
-    (e.g. 'MS_Dhoni', 'Virat Kohli', 'Lionel_Messi').
     """
     return name.strip().lower().replace("_", " ")
 
@@ -50,16 +49,15 @@ def _normalize_player_name(name: str) -> str:
 def _find_best_player_match(query_name: str, all_players: list[str]) -> str | None:
     """
     Find the best matching player name from the stored metadata players list.
-    Returns the original (un-normalized) stored player name on match, else None.
     """
     normalized_query = _normalize_player_name(query_name)
 
-    # Exact match (after normalization)
+    # Exact match
     for player in all_players:
         if _normalize_player_name(player) == normalized_query:
             return player
 
-    # Partial match fallback: check if query words are all in stored name
+    # Partial match fallback
     query_words = set(normalized_query.split())
     for player in all_players:
         player_words = set(_normalize_player_name(player).split())
@@ -73,20 +71,23 @@ def _find_best_player_match(query_name: str, all_players: list[str]) -> str | No
 # Retriever class
 # ---------------------------------------------------------------------------
 
-class Retriever:
+class Retriever(BaseRetriever):
+    """
+    LangChain BaseRetriever implementation for retrieving documents from MongoDB Atlas Vector Store.
+    """
+    embedder: Any = Field(default_factory=EmbeddingService)
+    vectordb: Any = Field(default_factory=VectorDatabase)
+    top_k: int = 5
 
-    def __init__(self):
-        self.embedder = EmbeddingService()
-        self.vectordb = VectorDatabase()
+    class Config:
+        arbitrary_types_allowed = True
 
     # ------------------------------------------------------------------
     # Players
     # ------------------------------------------------------------------
 
     async def get_all_players(self) -> list[str]:
-        """Return all unique player names stored in the collection metadata.
-        Result is cached in memory; call invalidate_player_cache() after re-indexing.
-        """
+        """Return all unique player names stored in the collection metadata."""
         global _player_cache
         if _player_cache is not None:
             return _player_cache
@@ -104,11 +105,7 @@ class Retriever:
     # ------------------------------------------------------------------
 
     async def retrieve_all_for_player(self, player_name: str, limit: int = 50) -> dict:
-        """
-        Return indexed chunks for the matched player from MongoDB.
-        Uses `limit` to prevent dumping the entire collection in one response.
-        Raises ValueError if no player is matched or the DB is empty.
-        """
+        """Return indexed chunks for the matched player from MongoDB."""
         all_players = await self.get_all_players()
         if not all_players:
             raise ValueError("The vector database is empty. Run the indexer first.")
@@ -131,30 +128,38 @@ class Retriever:
         }
 
     # ------------------------------------------------------------------
-    # Semantic retrieval (used by story generation)
+    # LangChain BaseRetriever Interface
     # ------------------------------------------------------------------
 
-    async def retrieve(self, query: str, top_k: int = 5) -> list[str]:
-        """
-        Semantically retrieve the top-k most relevant chunks using MongoDB Atlas Vector Search.
-        Automatically filters by player when a match is found.
-        Uses the cached player list to avoid a metadata scan per request.
-        """
-        query_embedding = await self.embedder.embed_query(query)
-
-        all_players = await self.get_all_players()  # reads from cache after first call
-
+    async def _aget_relevant_documents(self, query: str, *, run_manager=None) -> list[Document]:
+        """Async retrieval method for LangChain LCEL pipelines."""
+        all_players = await self.get_all_players()
         matched_player = None
         if all_players:
             matched_player = _find_best_player_match(query, all_players)
-            if matched_player:
-                logger.debug("Filtering by player: '%s'", matched_player)
-            else:
-                logger.debug("No exact player match for '%s', doing global search", query)
 
-        results = await self.vectordb.query(
-            query_embedding=query_embedding,
-            top_k=top_k,
-            filter_player=matched_player
+        return await self.vectordb.asimilarity_search(
+            query=query, k=self.top_k, filter_player=matched_player
         )
-        return [doc["text"] for doc in results]
+
+    def _get_relevant_documents(self, query: str, *, run_manager=None) -> list[Document]:
+        """Sync retrieval method for LangChain LCEL pipelines."""
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.run_until_complete(self._aget_relevant_documents(query, run_manager=run_manager))
+        except RuntimeError:
+            return asyncio.run(self._aget_relevant_documents(query, run_manager=run_manager))
+
+    # ------------------------------------------------------------------
+    # Helper / Compatibility retrieval method
+    # ------------------------------------------------------------------
+
+    async def retrieve(self, query: str, top_k: int = 5) -> list[str]:
+        """Semantically retrieve string chunks for backwards compatibility."""
+        all_players = await self.get_all_players()
+        matched_player = _find_best_player_match(query, all_players) if all_players else None
+
+        docs = await self.vectordb.asimilarity_search(
+            query=query, k=top_k, filter_player=matched_player
+        )
+        return [doc.page_content for doc in docs]

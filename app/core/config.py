@@ -14,6 +14,7 @@ class Settings:
     VOYAGE_API_KEY: str = os.getenv("VOYAGE_API_KEY", "")
     MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "5000"))
     MANGO_DB_URL :str = os.getenv("MANGO_DB_URL")
+    MONGO_DB_LOCAL : str = os.getenv("MONGO_DB_LOCAL")
 
 settings = Settings()
 
