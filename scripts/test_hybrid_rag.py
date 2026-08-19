@@ -61,23 +61,42 @@ async def test_router():
     check("Router: short name 'Messi' -> rag", d.route == ROUTE_RAG and d.player_name == "Lionel_Messi", str(d))
 
     # ── Wikipedia route: player NOT in RAG ─────────────────────────────
-    stub = lambda q, players=None: {"route": "wikipedia", "player_name": "Virat Kohli", "reason": "unknown player"}
+    stub = lambda q, players=None: {"topic_class": "sports_player", "player_name": "Virat Kohli", "reason": "unknown player"}
     d = await route_query("Tell me about Virat Kohli's career", FakeRetriever(PLAYERS), classify=stub)
     check("Router: unknown player -> wikipedia", d.route == ROUTE_WIKIPEDIA and d.player_name == "Virat Kohli", str(d))
 
+    # ── Deterministic guard: classifier says rag for a KB player -> rag ─
+    stub = lambda q, players=None: {"topic_class": "sports_player", "player_name": "Lionel Messi", "reason": "sports"}
+    d = await route_query("Tell me about Lionel Messi's career", FakeRetriever(PLAYERS), classify=stub)
+    check("Router: named player IN knowledge base -> rag", d.route == ROUTE_RAG and d.player_name == "Lionel_Messi", str(d))
+
+    # ── Legacy route field is still honoured ───────────────────────────
+    stub = lambda q, players=None: {"route": "wikipedia", "player_name": "Virat Kohli", "reason": "legacy"}
+    d = await route_query("Tell me about Virat Kohli's career", FakeRetriever(PLAYERS), classify=stub)
+    check("Router: legacy 'route' field maps to wikipedia", d.route == ROUTE_WIKIPEDIA, str(d))
+
     # ── General route: unrelated query (no Wikipedia call) ─────────────
-    stub = lambda q, players=None: {"route": "general", "player_name": None, "reason": "unrelated"}
+    stub = lambda q, players=None: {"topic_class": "general", "player_name": None, "reason": "unrelated"}
     d = await route_query("How does Python list comprehension work?", FakeRetriever(PLAYERS), classify=stub)
     check("Router: unrelated query -> general", d.route == ROUTE_GENERAL, str(d))
 
     # ── Document-content query -> rag ──────────────────────────────────
-    stub = lambda q, players=None: {"route": "rag", "player_name": None, "reason": "about documents"}
+    stub = lambda q, players=None: {"topic_class": "knowledge_base", "player_name": None, "reason": "about documents"}
     d = await route_query("Who is the player mentioned in this document?", FakeRetriever(PLAYERS), classify=stub)
     check("Router: document question -> rag", d.route == ROUTE_RAG, str(d))
 
     # ── Classifier failure -> graceful default to rag ──────────────────
     d = await route_query("some query", FakeRetriever(PLAYERS), classify=lambda q, players=None: (_ for _ in ()).throw(RuntimeError("boom")))
     check("Router: classifier failure -> default rag", d.route == ROUTE_RAG, str(d))
+
+    # ── Deterministic prefilter: clearly non-sports query declines w/o LLM ─
+    d = await route_query("How do I fix a Python syntax error?", FakeRetriever(PLAYERS))
+    check("Router: prefilter declines non-sports query", d.route == ROUTE_GENERAL, str(d))
+
+    # ── Sports query is NOT caught by the prefilter (goes to LLM) ──────
+    stub = lambda q, players=None: {"topic_class": "general", "player_name": None, "reason": "no specific athlete"}
+    d = await route_query("Tell me about the cricket World Cup", FakeRetriever(PLAYERS), classify=stub)
+    check("Router: sports query skips prefilter", d.route == ROUTE_GENERAL, str(d))
 
 
 def test_wikipedia_tool():
@@ -113,7 +132,7 @@ async def test_generate_story():
         return "FAKE_STORY_ANSWER"
 
     def fake_router_ask_llm(prompt, model=None, system_prompt=None):
-        return '{"route": "general", "player_name": null, "reason": "unrelated"}'
+        return '{"topic_class": "general", "player_name": null, "reason": "unrelated"}'
 
     try:
         chat_mod.get_retriever = lambda: FakeRetriever(PLAYERS)
@@ -149,7 +168,7 @@ async def test_generate_story():
         captured.clear()
         chat_mod.get_retriever = lambda: FakeRetriever(PLAYERS, docs=[])
         router_mod.ask_llm = lambda prompt, model=None, system_prompt=None: (
-            '{"route": "wikipedia", "player_name": "Virat Kohli", "reason": "unknown"}'
+            '{"topic_class": "sports_player", "player_name": "Virat Kohli", "reason": "unknown"}'
         )
         resp = await chat_mod.generate_story("Tell me about Virat Kohli's career", "timeline")
         check("Wikipedia path: selected route=wikipedia", resp.get("route") == ROUTE_WIKIPEDIA and resp.get("source") == "Wikipedia", str(resp.get("route")))
