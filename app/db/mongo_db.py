@@ -25,15 +25,44 @@ def user_collection():
     return db_instance.client[db_name]["users"]
 
 
+def profile_collection():
+    db_name = getattr(settings, "DB_NAME", None) or "rag_db"
+    return db_instance.client[db_name]["profiles"]
+
+
 async def ensure_user_indexes():
-    """Ensure unique indexes on username and email in the MongoDB users collection."""
+    """Ensure the MongoDB indexes required for authentication."""
     try:
         collection = user_collection()
-        await collection.create_index("username", unique=True)
-        await collection.create_index("email", unique=True)
+        # Drop the legacy non-sparse unique indexes if present: a non-sparse
+        # unique index on `username` would let only ONE Clerk-backed document
+        # exist (they have no username field -> null), which is wrong.
+        for legacy in ("username_1", "email_1"):
+            try:
+                await collection.drop_index(legacy)
+                logger.info(f"⚠ Dropped legacy non-sparse unique index '{legacy}' (replacing with sparse).")
+            except Exception:
+                pass
+        # Explicit names make this idempotent across restarts.
+        await collection.create_index("username", unique=True, sparse=True, name="username_unique_sparse")
+        await collection.create_index("email", unique=True, sparse=True, name="email_unique_sparse")
+        await collection.create_index("clerk_user_id", unique=True, sparse=True, name="clerk_user_id_unique")
+        await collection.create_index("refresh_token_hash", sparse=True, name="refresh_token_hash_sparse")
         logger.info("✅ Unique indexes created/verified on 'users' collection.")
     except Exception as e:
         logger.warning(f"Note on user collection index creation: {e}")
+
+    try:
+        profiles = profile_collection()
+        try:
+            await profiles.drop_index("user_id_1")
+            logger.info("⚠ Dropped legacy auto-named index 'user_id_1' (replacing with explicit name).")
+        except Exception:
+            pass
+        await profiles.create_index("user_id", unique=True, name="user_id_unique")
+        logger.info("✅ Unique index on 'profiles.user_id' verified.")
+    except Exception as e:
+        logger.warning(f"Note on profiles index creation: {e}")
 
 
 async def connect_to_mongo():

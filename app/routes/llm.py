@@ -5,8 +5,8 @@ from app.routes.auth import get_current_user
 router = APIRouter()
 
 
-@router.get("/")
-def landing_page():
+@router.get("/health")
+def health_check():
     return welcome_message()
 
 
