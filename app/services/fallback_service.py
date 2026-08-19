@@ -3,7 +3,7 @@ from app.services.llm_client import ask_llm
 
 logger = logging.getLogger(__name__)
 
-FALLBACK_MODEL = "groq/llama-3.3-70b-versatile"
+FALLBACK_MODEL = "groq/openai/gpt-oss-120b"
 
 def fallback_call(prompt: str) -> str:
     """Executes a fallback call using the configured fallback model when the primary model fails."""

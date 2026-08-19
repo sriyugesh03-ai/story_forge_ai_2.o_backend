@@ -154,6 +154,12 @@ class Retriever(BaseRetriever):
     # Helper / Compatibility retrieval method
     # ------------------------------------------------------------------
 
+    async def retrieve_docs_for_player(self, player_name: str, top_k: int = 5) -> list[Document]:
+        """Retrieve chunks for a specific stored player using an exact metadata filter."""
+        return await self.vectordb.asimilarity_search(
+            query=player_name, k=top_k, filter_player=player_name
+        )
+
     async def retrieve(self, query: str, top_k: int = 5) -> list[str]:
         """Semantically retrieve string chunks for backwards compatibility."""
         all_players = await self.get_all_players()

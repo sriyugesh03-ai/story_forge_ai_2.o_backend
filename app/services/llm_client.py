@@ -5,9 +5,10 @@ from app.prompts.system_prompt import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
-def ask_llm(prompt: str, model: str = None) -> str:
+def ask_llm(prompt: str, model: str = None, system_prompt: str | None = None) -> str:
     """Send prompt to LLM (LiteLLM) using default configured settings or override model."""
     model = model or settings.DEFAULT_MODEL
+    system_prompt = system_prompt or SYSTEM_PROMPT
 
     logger.info("Calling LLM: model=%s, tokens=%d, temperature=%s", model, settings.MAX_TOKENS, settings.TEMPERATURE)
 
@@ -23,7 +24,7 @@ def ask_llm(prompt: str, model: str = None) -> str:
         messages=[
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT
+                "content": system_prompt
             },
             {
                 "role": "user",
