@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 ACCESS_TOKEN_TYPE = "access"
 
 
-def _jwt_secret() -> str:
+def jwt_secret() -> str:
     secret = settings.APP_JWT_SECRET
     if not secret:
         # Development convenience only — never rely on this in production.
@@ -38,13 +38,13 @@ def create_access_token(user_id: str) -> str:
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)).timestamp()),
     }
-    return jwt.encode(payload, _jwt_secret(), algorithm="HS256")
+    return jwt.encode(payload, jwt_secret(), algorithm="HS256")
 
 
 def decode_access_token(token: str) -> dict | None:
     """Validate an application access token; returns claims or None."""
     try:
-        payload = jwt.decode(token, _jwt_secret(), algorithms=["HS256"])
+        payload = jwt.decode(token, jwt_secret(), algorithms=["HS256"])
     except jwt.PyJWTError:
         return None
     if payload.get("type") != ACCESS_TOKEN_TYPE:

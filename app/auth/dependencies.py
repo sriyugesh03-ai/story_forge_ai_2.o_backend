@@ -97,3 +97,6 @@ class _RateLimiter:
 
 clerk_exchange_limiter = _RateLimiter(limit=10, window_seconds=60)
 refresh_limiter = _RateLimiter(limit=30, window_seconds=60)
+github_start_limiter = _RateLimiter(limit=10, window_seconds=60)
+github_callback_limiter = _RateLimiter(limit=10, window_seconds=60)
+github_tool_limiter = _RateLimiter(limit=30, window_seconds=60)

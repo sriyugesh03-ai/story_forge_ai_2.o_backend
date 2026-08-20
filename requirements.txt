@@ -15,4 +15,5 @@ langchain-core
 langchain-mongodb
 langchain-google-genai
 wikipedia-api
-
+mcp
+cryptography

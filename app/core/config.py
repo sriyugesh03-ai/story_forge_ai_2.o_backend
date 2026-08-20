@@ -74,5 +74,24 @@ class Settings:
         f"{_CLERK_ISSUER}/.well-known/jwks.json" if _CLERK_ISSUER else "",
     )
 
+    # ── GitHub OAuth ──────────────────────────────────────────────────
+    GITHUB_CLIENT_ID: str = os.getenv("GITHUB_CLIENT_ID", "")
+    GITHUB_CLIENT_SECRET: str = os.getenv("GITHUB_CLIENT_SECRET", "")
+    GITHUB_REDIRECT_URI: str = os.getenv("GITHUB_REDIRECT_URI", "")
+    GITHUB_SCOPES: str = os.getenv("GITHUB_SCOPES", "read:user repo")
+    GITHUB_TOKEN_ENCRYPTION_KEY: str = os.getenv("GITHUB_TOKEN_ENCRYPTION_KEY", "")
+
+    # ── GitHub remote endpoints (hosted by GitHub — nothing to maintain) ──
+    GITHUB_AUTH_URL: str = os.getenv("GITHUB_AUTH_URL", "https://github.com/login/oauth/authorize")
+    GITHUB_TOKEN_URL: str = os.getenv("GITHUB_TOKEN_URL", "https://github.com/login/oauth/access_token")
+    GITHUB_API_URL: str = os.getenv("GITHUB_API_URL", "https://api.github.com")
+    GITHUB_MCP_URL: str = os.getenv("GITHUB_MCP_URL", "https://api.githubcopilot.com/mcp/")
+
+    # Comma-separated allow-list of MCP tool names the AI agent may call.
+    GITHUB_MCP_ALLOWED_TOOLS: str = os.getenv(
+        "GITHUB_MCP_ALLOWED_TOOLS",
+        "list_repositories,get_file_contents,search_repositories,list_issues,get_issue",
+    )
+
 
 settings = Settings()

@@ -30,6 +30,11 @@ def profile_collection():
     return db_instance.client[db_name]["profiles"]
 
 
+def github_connections_collection():
+    db_name = getattr(settings, "DB_NAME", None) or "rag_db"
+    return db_instance.client[db_name]["github_connections"]
+
+
 async def ensure_user_indexes():
     """Ensure the MongoDB indexes required for authentication."""
     try:
@@ -63,6 +68,14 @@ async def ensure_user_indexes():
         logger.info("✅ Unique index on 'profiles.user_id' verified.")
     except Exception as e:
         logger.warning(f"Note on profiles index creation: {e}")
+
+    try:
+        gh = github_connections_collection()
+        await gh.create_index("user_id", unique=True, name="user_id_unique")
+        await gh.create_index("github_user_id", unique=True, sparse=True, name="github_user_id_unique")
+        logger.info("✅ Indexes verified on 'github_connections' collection.")
+    except Exception as e:
+        logger.warning(f"Note on github_connections index creation: {e}")
 
 
 async def connect_to_mongo():

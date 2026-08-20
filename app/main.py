@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.routes.llm import router as llm_router
 from app.routes.auth import router as auth_router
+from app.routes.github import router as github_router
 from app.routes.players import router as players_router
 # from app.routes.voice import router as voice_router
 from app.db.mongo_db import connect_to_mongo, close_mongo_connection
@@ -59,6 +60,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(llm_router)
+app.include_router(github_router)
 app.include_router(players_router)
 # app.include_router(voice_router)
 
