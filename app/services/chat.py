@@ -1,19 +1,24 @@
+import json
 import logging
 
 from app.core.config import settings
+from app.prompts.github_prompt import get_github_prompt
 from app.rag.retriever import get_retriever
 from app.rag.node import RAGNode
 from app.prompts.rag_prompt import get_rag_prompt_template
 from app.routing.router import (
     ROUTE_GENERAL,
+    ROUTE_GITHUB,
     ROUTE_RAG,
     ROUTE_WIKIPEDIA,
     route_query,
 )
+from app.services.evaluation_service import EvaluationService
+from app.services.github_planner import plan_github_call
 from app.services.llm_client import ask_llm
 from app.services.retry_service import retry_call
 from app.services.fallback_service import fallback_call
-from app.services.evaluation_service import EvaluationService
+from app.tools.github_tool import GithubNotConnectedError, call_github_tool, get_connected_username
 from app.tools.wikipedia_tool import aget_wikipedia_player
 
 logger = logging.getLogger(__name__)
@@ -44,7 +49,7 @@ def _graceful_response(topic: str, evaluator, model_used: str, message: str,
     return {"story": message, "evaluation": metrics, "route": route, "source": source}
 
 
-async def generate_story(topic: str, story_type: str, debug: bool = False) -> dict:
+async def generate_story(topic: str, story_type: str, debug: bool = False, user_id: str | None = None) -> dict:
     retriever = get_retriever()   # shared singleton — BaseRetriever instance
     rag_node = RAGNode(retriever=retriever)
     evaluator = EvaluationService()
@@ -109,6 +114,47 @@ async def generate_story(topic: str, story_type: str, debug: bool = False) -> di
             source_label = "Wikipedia"
             retrieved_chunks = [wiki.content]
 
+        elif route == ROUTE_GITHUB:
+            # GITHUB TOOL PATH: plan a tool call, fetch data via MCP/REST, and
+            # let the LLM answer from that data (mirrors the Wikipedia path).
+            if not user_id:
+                return _graceful_response(
+                    topic, evaluator, model_used,
+                    "Please log in to use GitHub tools.",
+                    source="GitHub", route=route,
+                )
+            default_owner = await get_connected_username(user_id)
+            if not default_owner:
+                return _graceful_response(
+                    topic, evaluator, model_used,
+                    "Connect your GitHub account in Settings to let me inspect repositories and code.",
+                    source="GitHub", route=route,
+                )
+            plan = await plan_github_call(topic, default_owner)
+            if not plan:
+                return _graceful_response(
+                    topic, evaluator, model_used,
+                    'I couldn\'t map that request to a GitHub tool. Try "list my repositories", '
+                    '"show the README of owner/repo", or "list issues in owner/repo".',
+                    source="GitHub", route=route,
+                )
+            try:
+                result = await call_github_tool(user_id, plan["tool"], plan["arguments"])
+            except GithubNotConnectedError as err:
+                return _graceful_response(
+                    topic, evaluator, model_used, str(err),
+                    source="GitHub", route=route,
+                )
+            data = result["data"]
+            if isinstance(data, dict) and data.get("text"):
+                context = str(data["text"])
+            else:
+                context = json.dumps(data, default=str)
+            if len(context) > 6000:
+                context = context[:6000] + "\n...[truncated]"
+            source_label = f"GitHub/{result['via']}"
+            retrieved_chunks = [context]
+
         else:
             # GENERAL PATH: not about a player → graceful decline, no tool call.
             return _graceful_response(
@@ -119,8 +165,11 @@ async def generate_story(topic: str, story_type: str, debug: bool = False) -> di
         # ── 3. FINAL LLM GENERATION ────────────────────────────────────
         # Both paths feed their retrieved data into the SAME prompt as context,
         # and the LLM is instructed to use ONLY that context.
-        prompt_template = get_rag_prompt_template(topic, story_type)
-        prompt = prompt_template.format(context=context)
+        if route == ROUTE_GITHUB:
+            prompt = get_github_prompt(topic, context)
+        else:
+            prompt_template = get_rag_prompt_template(topic, story_type)
+            prompt = prompt_template.format(context=context)
 
         evaluator.start_llm()
 

@@ -24,4 +24,4 @@ async def story(
     - **story_type**: biography | timeline | reel | documentary
     - **debug**: Set to `true` to include the raw retrieved chunks in the response
     """
-    return await generate_story(topic, story_type, debug=debug)
+    return await generate_story(topic, story_type, debug=debug, user_id=current_user["id"])

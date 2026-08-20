@@ -29,10 +29,12 @@ def allowed_tools() -> set[str]:
 
 
 # Canonical (logical) tool name -> name on GitHub's hosted MCP server.
-# list_repositories has no hosted-MCP equivalent, so it is REST-only.
+# list_repositories and get_file_contents are REST-only: the hosted MCP has
+# no list_repositories tool, and its get_file_contents downloads files to a
+# sandbox instead of returning content (which is what this agent needs).
 _MCP_TOOL_NAMES = {
     "search_repositories": "search_repositories",
-    "get_file_contents": "get_file_contents",
+    "get_file_contents": None,
     "list_issues": "list_issues",
     "get_issue": "issue_read",
     "list_repositories": None,
@@ -48,6 +50,14 @@ async def get_user_token(user_id: str) -> str:
     if not conn:
         raise GithubNotConnectedError("GitHub is not connected for this account.")
     return github_auth.decrypt_token(conn["access_token_enc"])
+
+
+async def get_connected_username(user_id: str) -> str | None:
+    """Return the connected GitHub login, or None if not connected."""
+    conn = await github_repo.find_by_user_id(user_id)
+    if conn and conn.get("github_username"):
+        return str(conn["github_username"])
+    return None
 
 
 async def call_github_tool(user_id: str, tool: str, arguments: dict) -> dict:

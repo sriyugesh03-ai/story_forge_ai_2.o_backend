@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 ROUTE_RAG = "rag"
 ROUTE_WIKIPEDIA = "wikipedia"
 ROUTE_GENERAL = "general"
+ROUTE_GITHUB = "github"
 
-VALID_ROUTES = {ROUTE_RAG, ROUTE_WIKIPEDIA, ROUTE_GENERAL}
+VALID_ROUTES = {ROUTE_RAG, ROUTE_WIKIPEDIA, ROUTE_GENERAL, ROUTE_GITHUB}
 
 ROUTER_SYSTEM_PROMPT = """You are a query analyzer for a sports storytelling assistant.
 
@@ -186,6 +187,20 @@ _NON_SPORTS_SIGNALS = frozenset({
     "stock", "invest", "investing", "economy", "history of", "geography", "capital",
 })
 
+_GITHUB_INTENT_PATTERNS = [
+    re.compile(r"github", re.IGNORECASE),
+    re.compile(r"\brepositories\b|\brepository\b|\brepos?\b", re.IGNORECASE),
+    re.compile(r"pull request", re.IGNORECASE),
+    re.compile(r"readme", re.IGNORECASE),
+    re.compile(r"(code search|search code)", re.IGNORECASE),
+    # owner/repo (owner must start with a letter, avoids "183/183")
+    re.compile(r"(?<![a-zA-Z0-9])[a-zA-Z][\w.-]*/[\w.-]+"),
+]
+
+
+def _has_github_intent(query: str) -> bool:
+    return any(p.search(query) for p in _GITHUB_INTENT_PATTERNS)
+
 
 def _contains_any(text_lower: str, keywords) -> bool:
     return any(kw in text_lower for kw in keywords)
@@ -215,6 +230,15 @@ async def route_query(query: str, retriever, classify=None) -> RouteDecision:
                 player_name=match,
                 reason="Player present in RAG knowledge base",
             )
+
+    # GitHub tool intent: the query asks about the user's GitHub repos/code.
+    # Checked before the non-sports prefilter so e.g. "search my code" reaches
+    # the GitHub tool path instead of being declined as general.
+    if _has_github_intent(query):
+        return RouteDecision(
+            route=ROUTE_GITHUB,
+            reason="Query targets GitHub repositories or code",
+        )
 
     query_lower = query.lower()
     has_sports_signal = _contains_any(query_lower, _SPORTS_SIGNALS)
