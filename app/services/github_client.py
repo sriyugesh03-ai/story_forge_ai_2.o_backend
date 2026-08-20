@@ -92,6 +92,8 @@ class GithubRestClient:
         return {"issue": self._get(f"/repos/{owner}/{repo}/issues/{int(issue_number)}")}
 
     def call(self, tool: str, arguments: dict) -> dict:
+        import inspect
+
         mapping = {
             "list_repositories": self.list_repositories,
             "get_file_contents": self.get_file_contents,
@@ -102,4 +104,14 @@ class GithubRestClient:
         fn = mapping.get(tool)
         if fn is None:
             raise GitHubApiError(f"Unknown tool: {tool}")
-        return fn(**arguments)
+
+        # Forward only arguments the REST method accepts, mapping MCP-style
+        # names onto the REST equivalents so both tool paths stay compatible.
+        aliases = {"limit": "per_page", "perPage": "per_page", "per_page": "per_page"}
+        params = inspect.signature(fn).parameters
+        kwargs = {}
+        for key, value in (arguments or {}).items():
+            mapped = aliases.get(key, key)
+            if mapped in params:
+                kwargs[mapped] = value
+        return fn(**kwargs)

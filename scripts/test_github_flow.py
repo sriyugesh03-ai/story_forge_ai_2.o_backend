@@ -136,25 +136,32 @@ async def main():
                 # Tool endpoint with mocked MCP success
                 async def fake_mcp_ok(token, tool, arguments):
                     check("mcp: called with user token", token == "gho_mock_token")
+                    check("mcp: logical name mapped to server name", tool == "search_repositories")
                     return {"text": "[{full_name: octo-test/demo}]", "is_error": False}
 
                 original_mcp = github_tool.mcp_call_tool
                 github_tool.mcp_call_tool = fake_mcp_ok
-                r = await client.post("/github/mcp/tool", headers=hdr, json={"tool": "list_repositories", "arguments": {}})
+                r = await client.post("/github/mcp/tool", headers=hdr, json={"tool": "search_repositories", "arguments": {"query": "demo"}})
                 check("tool: via mcp", r.status_code == 200 and r.json()["via"] == "mcp" and "octo-test" in r.json()["data"]["text"], str(r.text[:160]))
+
+                # list_repositories has no hosted-MCP equivalent -> always REST
+                def fake_rest(token, tool, arguments):
+                    return {"result": {"rest": "repos"}}
+
+                original_rest = github_tool._rest_call
+                github_tool._rest_call = fake_rest
+                r = await client.post("/github/mcp/tool", headers=hdr, json={"tool": "list_repositories", "arguments": {"limit": 3}})
+                check("tool: list_repositories REST-only", r.status_code == 200 and r.json()["via"] == "rest" and r.json()["data"] == {"result": {"rest": "repos"}}, str(r.text[:160]))
 
                 # Tool endpoint with MCP transport failure -> REST fallback
                 async def fake_mcp_fail(token, tool, arguments):
                     raise McpCallError("transport down")
 
-                def fake_rest(token, tool, arguments):
-                    return {"result": {"rest": "fallback-data"}}
-
                 github_tool.mcp_call_tool = fake_mcp_fail
-                github_tool._rest_call = fake_rest
                 r = await client.post("/github/mcp/tool", headers=hdr, json={"tool": "search_repositories", "arguments": {"query": "x"}})
-                check("tool: falls back to REST", r.status_code == 200 and r.json()["via"] == "rest" and r.json()["data"] == {"result": {"rest": "fallback-data"}}, str(r.text[:160]))
+                check("tool: falls back to REST", r.status_code == 200 and r.json()["via"] == "rest" and r.json()["data"] == {"result": {"rest": "repos"}}, str(r.text[:160]))
                 github_tool.mcp_call_tool = original_mcp
+                github_tool._rest_call = original_rest
 
                 # Disallowed tool
                 r = await client.post("/github/mcp/tool", headers=hdr, json={"tool": "create_or_update_file", "arguments": {}})

@@ -28,6 +28,17 @@ def allowed_tools() -> set[str]:
     return {t.strip() for t in settings.GITHUB_MCP_ALLOWED_TOOLS.split(",") if t.strip()}
 
 
+# Canonical (logical) tool name -> name on GitHub's hosted MCP server.
+# list_repositories has no hosted-MCP equivalent, so it is REST-only.
+_MCP_TOOL_NAMES = {
+    "search_repositories": "search_repositories",
+    "get_file_contents": "get_file_contents",
+    "list_issues": "list_issues",
+    "get_issue": "issue_read",
+    "list_repositories": None,
+}
+
+
 async def get_user_token(user_id: str) -> str:
     """Load a user's GitHub connection and return the DECRYPTED token.
 
@@ -50,9 +61,13 @@ async def call_github_tool(user_id: str, tool: str, arguments: dict) -> dict:
     token = await get_user_token(user_id)
 
     # 1. MCP-first
-    if settings.GITHUB_MCP_URL:
+    mcp_name = _MCP_TOOL_NAMES.get(tool)
+    if mcp_name and settings.GITHUB_MCP_URL:
+        call_args = dict(arguments or {})
+        if tool == "get_issue":
+            call_args.setdefault("method", "get")
         try:
-            result = await mcp_call_tool(token, tool, arguments)
+            result = await mcp_call_tool(token, mcp_name, call_args)
             if not result.get("is_error"):
                 return {"tool": tool, "via": "mcp", "data": result}
             logger.warning("GitHub MCP tool '%s' reported an error; trying REST.", tool)
